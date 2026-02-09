@@ -128,7 +128,9 @@ class BrowserBuilder:
                 # 如果还没找到，假设解压根目录就是
                 source_core = extract_dir
 
-        target_core = self.output_dir / "core"
+        # 重命名 core 文件夹为大写字母开头的浏览器名称
+        target_name = self.browser_name.capitalize()
+        target_core = self.output_dir / target_name
         if target_core.exists():
             shutil.rmtree(target_core)
             
@@ -215,7 +217,7 @@ class BrowserBuilder:
 
     def create_archive(self):
         logger.info("Creating archive...")
-        archive_name = f"{self.browser_name}_Portable_{self.version}.7z"
+        archive_name = f"{self.browser_name.capitalize()}_Portable_{self.version}.7z"
         output_archive = self.workspace / archive_name
         
         if output_archive.exists():
