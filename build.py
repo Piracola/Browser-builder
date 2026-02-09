@@ -121,7 +121,7 @@ class BrowserBuilder:
         else:
             # 否则查找 exe 所在目录
             for root, dirs, files in os.walk(extract_dir):
-                if self.config["exe_name"] in files:
+                if self.config["exe_name"].lower() in [f.lower() for f in files]:
                     source_core = Path(root)
                     break
             if not source_core:
@@ -229,13 +229,13 @@ class BrowserBuilder:
 
         # 使用 7z 打包
         try:
-            subprocess.run([seven_z, "a", str(output_archive), f"{self.output_dir}/*", "-mx9"], check=True)
+            subprocess.run([seven_z, "a", str(output_archive), "*", "-mx9"], cwd=self.output_dir, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError):
              # Fallback logic
              if seven_z == "7z":
                  seven_z_path = r"C:\Program Files\7-Zip\7z.exe"
                  if os.path.exists(seven_z_path):
-                     subprocess.run([seven_z_path, "a", str(output_archive), f"{self.output_dir}/*", "-mx9"], check=True)
+                     subprocess.run([seven_z_path, "a", str(output_archive), "*", "-mx9"], cwd=self.output_dir, check=True)
                  else:
                      raise
              else:
