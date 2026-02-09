@@ -43,58 +43,9 @@ class BrowserBuilder:
 
     def fetch_latest_version(self):
         """如果未提供版本和URL，尝试自动获取"""
-        if self.version and self.url:
-            return
+        if not self.version or not self.url:
+            raise ValueError("Version and URL must be provided via arguments.")
 
-        logger.info(f"Fetching latest version info for {self.browser_name}...")
-        
-        if self.browser_name.lower() == "firefox":
-            # Mozilla API
-            try:
-                resp = requests.get("https://product-details.mozilla.org/1.0/firefox_versions.json")
-                resp.raise_for_status()
-                data = resp.json()
-                self.version = data.get("LATEST_FIREFOX_VERSION")
-                # 构造下载链接
-                self.url = f"https://download-installer.cdn.mozilla.net/pub/firefox/releases/{self.version}/win64/en-US/Firefox%20Setup%20{self.version}.exe"
-            except Exception as e:
-                logger.error(f"Failed to fetch Firefox version: {e}")
-                raise
-
-        elif self.browser_name.lower() == "floorp":
-            try:
-                resp = requests.get("https://api.github.com/repos/Floorp-Projects/Floorp/releases/latest")
-                resp.raise_for_status()
-                data = resp.json()
-                self.version = data["tag_name"]
-                # 寻找 asset
-                for asset in data["assets"]:
-                    if "floorp-windows-x86_64.installer.exe" in asset["name"]:
-                        self.url = asset["browser_download_url"]
-                        break
-                if not self.url:
-                    raise ValueError("Could not find Floorp installer asset")
-            except Exception as e:
-                logger.error(f"Failed to fetch Floorp version: {e}")
-                raise
-
-        elif self.browser_name.lower() == "zen":
-            try:
-                resp = requests.get("https://api.github.com/repos/zen-browser/desktop/releases/latest")
-                resp.raise_for_status()
-                data = resp.json()
-                self.version = data["tag_name"]
-                for asset in data["assets"]:
-                    if "zen.installer.exe" in asset["name"]:
-                        self.url = asset["browser_download_url"]
-                        break
-                if not self.url:
-                    # Fallback
-                     self.url = "https://github.com/zen-browser/desktop/releases/latest/download/zen.installer.exe"
-            except Exception as e:
-                logger.error(f"Failed to fetch Zen version: {e}")
-                raise
-        
         logger.info(f"Resolved version: {self.version}")
         logger.info(f"Resolved URL: {self.url}")
 
