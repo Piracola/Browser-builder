@@ -18,10 +18,14 @@ class BrowserBuilder:
         self.version = args.version
         self.url = args.url
         self.libportable_path = Path(args.libportable).resolve()
+        if not self.libportable_path.exists():
+            raise FileNotFoundError(f"Libportable path not found: {self.libportable_path}")
+
         self.workspace = Path(args.workspace).resolve() if args.workspace else Path(os.getcwd())
         self.temp_dir = self.workspace / "temp_build"
         self.output_dir = self.workspace / "output"
         self.installer_name = f"{self.browser_name.lower()}_installer.exe"
+        self.seven_z_path = args.seven_z_path
         
         # 针对不同浏览器的特定配置
         self.browser_configs = {
@@ -74,17 +78,27 @@ class BrowserBuilder:
 
         logger.info(f"Extracting {installer_path} to {extract_dir}...")
         
+        # 确定 7z 路径
+        seven_z = self.seven_z_path or shutil.which("7z") or r"C:\Program Files\7-Zip\7z.exe"
+        
+        if not seven_z or not os.path.exists(seven_z):
+             # 尝试直接调用命令，如果 PATH 中有
+             seven_z = "7z"
+        
         # 使用 7z 解压
         try:
-            subprocess.run(["7z", "x", str(installer_path), f"-o{extract_dir}", "-y"], check=True)
+            subprocess.run([seven_z, "x", str(installer_path), f"-o{extract_dir}", "-y"], check=True)
         except (FileNotFoundError, subprocess.CalledProcessError):
-            logger.warning("7z not found in PATH or failed, trying default location...")
-            seven_z_path = r"C:\Program Files\7-Zip\7z.exe"
-            if os.path.exists(seven_z_path):
-                subprocess.run([seven_z_path, "x", str(installer_path), f"-o{extract_dir}", "-y"], check=True)
-            else:
-                # 尝试寻找 workspace 下可能的 7z (如果有的话)
-                raise RuntimeError("7z executable not found. Please install 7-Zip.")
+             # 如果上面失败了，且是默认路径失败，尝试查找
+             if seven_z == "7z":
+                 logger.warning("7z command failed, trying default path...")
+                 default_path = r"C:\Program Files\7-Zip\7z.exe"
+                 if os.path.exists(default_path):
+                     subprocess.run([default_path, "x", str(installer_path), f"-o{extract_dir}", "-y"], check=True)
+                 else:
+                     raise RuntimeError("7z executable not found. Please install 7-Zip or provide path via --seven-z-path.")
+             else:
+                 raise
 
         # 清理 setup.exe 等不需要的文件
         for root, dirs, files in os.walk(extract_dir):
@@ -207,12 +221,23 @@ class BrowserBuilder:
         if output_archive.exists():
             output_archive.unlink()
 
+        # 确定 7z 路径 (复用逻辑或再次查找)
+        seven_z = self.seven_z_path or shutil.which("7z") or r"C:\Program Files\7-Zip\7z.exe"
+        if not seven_z or not os.path.exists(seven_z): seven_z = "7z"
+
         # 使用 7z 打包
         try:
-            subprocess.run(["7z", "a", str(output_archive), f"{self.output_dir}/*", "-mx9"], check=True)
+            subprocess.run([seven_z, "a", str(output_archive), f"{self.output_dir}/*", "-mx9"], check=True)
         except (FileNotFoundError, subprocess.CalledProcessError):
-             seven_z_path = r"C:\Program Files\7-Zip\7z.exe"
-             subprocess.run([seven_z_path, "a", str(output_archive), f"{self.output_dir}/*", "-mx9"], check=True)
+             # Fallback logic
+             if seven_z == "7z":
+                 seven_z_path = r"C:\Program Files\7-Zip\7z.exe"
+                 if os.path.exists(seven_z_path):
+                     subprocess.run([seven_z_path, "a", str(output_archive), f"{self.output_dir}/*", "-mx9"], check=True)
+                 else:
+                     raise
+             else:
+                 raise
         
         logger.info(f"Archive created: {output_archive}")
         # 输出给 GitHub Actions
@@ -222,18 +247,26 @@ class BrowserBuilder:
                 f.write(f"artifact_name={archive_name}\n")
                 f.write(f"version={self.version}\n")
 
-    def check_remote_release(self):
-        """Check if release already exists in the current repository"""
+    def cleanup(self):
+        """Clean up temporary build files"""
+        if self.temp_dir.exists():
+            logger.info(f"Cleaning up temporary directory: {self.temp_dir}")
+            try:
+                shutil.rmtree(self.temp_dir)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp dir: {e}")
+
+    def check_remote_release(self) -> bool:
+        """Check if release already exists in the current repository. Returns True if exists."""
         repo = os.environ.get("GITHUB_REPOSITORY")
         token = os.environ.get("GITHUB_TOKEN")
         
         if not repo or not token:
             logger.warning("GITHUB_REPOSITORY or GITHUB_TOKEN not set, skipping release check.")
-            return
+            return False
 
         if not self.version:
-             # 版本尚未获取，需要在 fetch_latest_version 后调用
-             return
+             return False
 
         logger.info(f"Checking if release {self.version} exists in {repo}...")
         
@@ -242,24 +275,29 @@ class BrowserBuilder:
             "Accept": "application/vnd.github.v3+json"
         }
         
-        # 尝试完全匹配 tag
         url = f"https://api.github.com/repos/{repo}/releases/tags/{self.version}"
         
         try:
             resp = requests.get(url, headers=headers)
             if resp.status_code == 200:
-                logger.info(f"Release {self.version} already exists. Skipping build.")
-                sys.exit(0)
+                logger.info(f"Release {self.version} already exists.")
+                return True
             elif resp.status_code == 404:
                 logger.info(f"Release {self.version} does not exist. Proceeding with build.")
+                return False
             else:
                 logger.warning(f"Failed to check release status: {resp.status_code} {resp.text}")
+                return False
         except Exception as e:
             logger.warning(f"Error checking release status: {e}")
+            return False
 
     def run(self):
         self.fetch_latest_version()
-        self.check_remote_release()
+        if self.check_remote_release():
+            logger.info("Release already exists. Exiting...")
+            return 
+            
         installer = self.download()
         core_dir = self.extract(installer)
         self.inject(core_dir)
@@ -273,14 +311,16 @@ if __name__ == "__main__":
     parser.add_argument("--libportable", required=True, help="Path to libportable directory")
     parser.add_argument("--launcher", help="Path to launcher script (e.g. start.bat)")
     parser.add_argument("--workspace", help="Workspace directory")
+    parser.add_argument("--seven-z-path", help="Path to 7z executable")
     
     args = parser.parse_args()
     
     try:
         builder = BrowserBuilder(args)
-        builder.run()
-        builder.add_launcher(args.launcher)
-        builder.create_archive()
+        if builder.run():
+            builder.add_launcher(args.launcher)
+            builder.create_archive()
+            builder.cleanup()
     except Exception as e:
         logger.error(f"Build failed: {e}")
         sys.exit(1)
