@@ -271,8 +271,44 @@ class BrowserBuilder:
                 f.write(f"artifact_name={archive_name}\n")
                 f.write(f"version={self.version}\n")
 
+    def check_remote_release(self):
+        """Check if release already exists in the current repository"""
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        token = os.environ.get("GITHUB_TOKEN")
+        
+        if not repo or not token:
+            logger.warning("GITHUB_REPOSITORY or GITHUB_TOKEN not set, skipping release check.")
+            return
+
+        if not self.version:
+             # 版本尚未获取，需要在 fetch_latest_version 后调用
+             return
+
+        logger.info(f"Checking if release {self.version} exists in {repo}...")
+        
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # 尝试完全匹配 tag
+        url = f"https://api.github.com/repos/{repo}/releases/tags/{self.version}"
+        
+        try:
+            resp = requests.get(url, headers=headers)
+            if resp.status_code == 200:
+                logger.info(f"Release {self.version} already exists. Skipping build.")
+                sys.exit(0)
+            elif resp.status_code == 404:
+                logger.info(f"Release {self.version} does not exist. Proceeding with build.")
+            else:
+                logger.warning(f"Failed to check release status: {resp.status_code} {resp.text}")
+        except Exception as e:
+            logger.warning(f"Error checking release status: {e}")
+
     def run(self):
         self.fetch_latest_version()
+        self.check_remote_release()
         installer = self.download()
         core_dir = self.extract(installer)
         self.inject(core_dir)
