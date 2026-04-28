@@ -1,3 +1,18 @@
+"""Common builder for Firefox-family portable browser packages.
+
+This script is the shared build entry used by the portable browser
+repositories below. Each child repository checks out this repository as
+``builder`` in GitHub Actions, installs ``builder/requirements.txt``, then
+calls ``python builder/build.py`` with its browser version, installer URL, and
+local ``libportable`` directory.
+
+Related repositories:
+- Browser-builder: https://github.com/Piracola/Browser-builder
+- Firefox-Libportable: https://github.com/Piracola/Firefox-Libportable
+- Floorp_portable: https://github.com/Piracola/Floorp_portable
+- Zen-Libportable: https://github.com/Piracola/Zen-Libportable
+"""
+
 import argparse
 import logging
 import os
@@ -216,7 +231,7 @@ class BrowserBuilder:
 chcp 65001 >nul
 setlocal
 
-set "target=%~dp0{self.config['folder_name']}\{self.config['exe_name']}"
+set "target=%~dp0{self.config['folder_name']}\\{self.config['exe_name']}"
 set "lnk=%~dp0{self.browser_name.capitalize()}.lnk"
 
 if not exist "%target%" (
@@ -278,7 +293,19 @@ echo [Success] Shortcut created: %lnk%
         self.cleanup()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build Portable Browser")
+    parser = argparse.ArgumentParser(
+        description="Build portable Firefox-family browser packages with libportable.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Child repositories that use this shared builder:
+  Firefox-Libportable: https://github.com/Piracola/Firefox-Libportable
+  Floorp_portable:     https://github.com/Piracola/Floorp_portable
+  Zen-Libportable:     https://github.com/Piracola/Zen-Libportable
+
+Typical GitHub Actions usage:
+  python builder/build.py --browser firefox --version <version> --url <installer-url> --libportable libportable --launcher 开始.bat
+""",
+    )
     parser.add_argument("--browser", required=True, help="Browser name (firefox, floorp, zen)")
     parser.add_argument("--version", help="Browser version")
     parser.add_argument("--url", help="Download URL")
