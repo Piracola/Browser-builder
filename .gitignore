@@ -1,0 +1,6 @@
+temp_build/
+temp_libportable/
+output/
+*.7z
+*.7z.sha256
+__pycache__/

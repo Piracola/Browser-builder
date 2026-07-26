@@ -1,0 +1,233 @@
+# 可复用工作流：构建并发布 Firefox 系列浏览器便携版
+#
+# 三个浏览器仓库共用这一份流程，各自的工作流只需传入浏览器名称。
+# 调用方式见各浏览器仓库的 .github/workflows/ 目录。
+name: Build Portable Browser
+
+on:
+  workflow_call:
+    inputs:
+      browser:
+        description: '浏览器标识：firefox / floorp / zen'
+        required: true
+        type: string
+      lang:
+        description: 'Firefox 安装包语言，例如 en-US、zh-CN（仅 Firefox 有效）'
+        required: false
+        type: string
+        default: 'en-US'
+      release-notes-url:
+        description: '上游官方发行说明地址，支持用 {version} 占位符'
+        required: false
+        type: string
+        default: ''
+      builder-ref:
+        description: '检出 Browser-builder 的分支或标签，应与 uses: 里的引用保持一致'
+        required: false
+        type: string
+        default: 'main'
+      python-version:
+        required: false
+        type: string
+        default: '3.10'
+      keep-workflow-runs:
+        description: '保留的历史运行记录条数'
+        required: false
+        type: number
+        default: 10
+    outputs:
+      built:
+        description: '本次是否执行了构建'
+        value: ${{ jobs.build.outputs.should_build }}
+      version:
+        description: '解析到的浏览器版本'
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    outputs:
+      should_build: ${{ steps.version-check.outputs.should_build }}
+      version: ${{ steps.resolve.outputs.resolved_version }}
+
+    steps:
+      - name: 检出浏览器仓库
+        uses: actions/checkout@v4
+
+      # 注意：可复用工作流里拿不到自身所在的提交（github.job_workflow_sha 为空），
+      # 所以用显式的 builder-ref 输入。想要完全可复现，就在调用方把 uses: 的引用
+      # 和 builder-ref 同时指向同一个 tag。
+      - name: 检出构建器 Browser-builder
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/Browser-builder
+          ref: ${{ inputs.builder-ref }}
+          path: builder
+
+      - name: 记录构建器版本
+        id: builder-info
+        run: |
+          $sha = git -C builder rev-parse HEAD
+          Write-Host "构建器提交：$sha"
+          echo "builder_sha=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: 安装依赖
+        run: pip install -r builder/requirements.txt
+
+      - name: 解析最新版本
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python builder/build.py `
+            --browser ${{ inputs.browser }} `
+            --lang ${{ inputs.lang }} `
+            --auto-version --check-only `
+            --libportable libportable
+
+      - name: 判断是否需要构建
+        id: version-check
+        run: |
+          $latest = "${{ steps.resolve.outputs.resolved_version }}"
+          $versionFile = "last_version.txt"
+          $shouldBuild = "true"
+          $reason = "${{ github.event_name }}"
+
+          # 只有定时任务会在版本未变化时跳过；手动触发和 push 总是重新构建。
+          if ("${{ github.event_name }}" -eq "schedule") {
+            if (Test-Path $versionFile) {
+              $last = (Get-Content -Raw $versionFile).Trim()
+              if ($last -eq $latest) {
+                Write-Host "版本未变化（$last），跳过构建。"
+                $shouldBuild = "false"
+                $reason = "no_update"
+              } else {
+                $reason = "version_update"
+              }
+            } else {
+              $reason = "first_run"
+            }
+          }
+
+          if ($shouldBuild -eq "true") {
+            $latest | Out-File -FilePath $versionFile -Encoding UTF8 -NoNewline
+          }
+
+          echo "should_build=$shouldBuild" >> $env:GITHUB_OUTPUT
+          echo "build_reason=$reason" >> $env:GITHUB_OUTPUT
+
+      - name: 构建便携版
+        id: build
+        if: steps.version-check.outputs.should_build == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python builder/build.py `
+            --browser ${{ inputs.browser }} `
+            --lang ${{ inputs.lang }} `
+            --version "${{ steps.resolve.outputs.resolved_version }}" `
+            --url "${{ steps.resolve.outputs.resolved_url }}" `
+            --libportable libportable `
+            --launcher 开始.bat `
+            --smoke-test-timeout 180
+
+      - name: 生成发行说明
+        id: notes
+        if: steps.version-check.outputs.should_build == 'true'
+        run: |
+          $version = "${{ steps.resolve.outputs.resolved_version }}"
+          $display = "${{ steps.resolve.outputs.browser_display }}"
+          $sha256 = "${{ steps.build.outputs.artifact_sha256 }}"
+          $artifact = "${{ steps.build.outputs.artifact_name }}"
+          $libportable = "${{ steps.build.outputs.libportable_version }}"
+          $notesUrl = "${{ inputs.release-notes-url }}".Replace("{version}", $version)
+
+          $lines = @(
+            "$display $version 便携版，由 GitHub Actions 自动构建。",
+            "",
+            "## 使用方法",
+            "",
+            "1. 下载 ``$artifact``（不要下载 Source code）。",
+            "2. 解压到任意目录，例如 ``D:\Browser\$display``。",
+            "3. 双击 ``开始.bat`` 创建快捷方式，然后用快捷方式启动。",
+            "",
+            "用户数据保存在解压目录的 ``Profiles\`` 中，更新时保留该目录即可。",
+            "",
+            "## 校验与来源",
+            "",
+            "| 项目 | 值 |",
+            "|------|-----|",
+            "| 安装包来源 | 上游官方安装包，构建时已按官方公布的哈希校验 |",
+            "| 便携化组件 | [libportable $libportable](https://github.com/adonais/libportable/releases/tag/$libportable) |",
+            "| 构建器提交 | [``${{ steps.builder-info.outputs.builder_sha }}``](https://github.com/${{ github.repository_owner }}/Browser-builder/commit/${{ steps.builder-info.outputs.builder_sha }}) |",
+            "| 产物 SHA-256 | ``$sha256`` |",
+            "",
+            "校验下载文件（PowerShell）：",
+            "",
+            '```powershell',
+            "Get-FileHash .\$artifact -Algorithm SHA256",
+            '```',
+            "",
+            "构建过程会校验安装包哈希、校验注入二进制哈希，并在打包前实际启动一次浏览器，",
+            "确认用户数据确实写入了便携目录而不是系统的 %APPDATA%。"
+          )
+
+          if ($notesUrl) {
+            $lines += @("", "## 上游发行说明", "", $notesUrl)
+          }
+
+          Set-Content -Path release_body.md -Value ($lines -join "`n") -Encoding UTF8
+
+      - name: 发布 Release
+        if: steps.version-check.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.resolve.outputs.resolved_version }}
+          name: ${{ steps.resolve.outputs.browser_display }} ${{ steps.resolve.outputs.resolved_version }}
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.build.outputs.artifact_path }}
+            ${{ steps.build.outputs.checksum_path }}
+
+      - name: 提交版本记录
+        if: steps.version-check.outputs.should_build == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add last_version.txt
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "版本记录无变化，无需提交。"
+          } elseif ($LASTEXITCODE -eq 1) {
+            git commit -m "Update ${{ steps.resolve.outputs.browser_display }} version to ${{ steps.resolve.outputs.resolved_version }}"
+            git push
+          } else {
+            exit $LASTEXITCODE
+          }
+
+  cleanup:
+    if: always()
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: 清理历史运行记录
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 0
+          keep_minimum_runs: ${{ inputs.keep-workflow-runs }}

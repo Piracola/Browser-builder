@@ -1,0 +1,62 @@
+# 每周检查上游 libportable 是否发布了新版本，有更新就开一个 issue 提醒。
+# 二进制不会被自动替换：注入组件直接决定成品是否便携，需要人工确认后再同步。
+name: Check libportable Upstream
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 1'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - run: pip install -r requirements.txt
+
+      - name: 对比上游版本
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python tools/sync_libportable.py --check
+
+      - name: 有新版本时提醒
+        if: steps.check.outputs.update_available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: 'libportable 有新版本：${{ steps.check.outputs.latest_tag }}'
+          BODY: |
+            上游 [libportable](https://github.com/adonais/libportable) 发布了新版本。
+
+            | 项目 | 版本 |
+            |------|------|
+            | 当前已集成 | `${{ steps.check.outputs.current_tag }}` |
+            | 上游最新 | `${{ steps.check.outputs.latest_tag }}` |
+            | 发布时间 | ${{ steps.check.outputs.published_at }} |
+            | 发行页面 | ${{ steps.check.outputs.release_url }} |
+
+            ## 同步步骤
+
+            ```powershell
+            python tools/sync_libportable.py --tag ${{ steps.check.outputs.latest_tag }}
+            git add bin/
+            git commit -m "chore: 同步 libportable 到 ${{ steps.check.outputs.latest_tag }}"
+            ```
+
+            `bin/manifest.json` 会随之更新为新版本的哈希。提交后请手动触发一次任意浏览器仓库的构建，
+            确认构建后的便携性校验（PE 导入表检查与无头启动检查）依然通过，再让定时构建照常运行。
+        run: |
+          if gh issue list --state open --search "$TITLE" --json title --jq '.[].title' | grep -Fxq "$TITLE"; then
+            echo "已存在对应 issue，跳过。"
+            exit 0
+          fi
+          gh issue create --title "$TITLE" --body "$BODY"

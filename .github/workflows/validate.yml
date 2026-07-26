@@ -1,0 +1,64 @@
+# 构建器自检：这份脚本被三个浏览器仓库共用，一旦改坏会同时影响全部三条流水线。
+# 这里做最便宜也最有价值的检查——语法能过，且三个浏览器的版本解析都还能用。
+name: Validate Builder
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - run: pip install -r requirements.txt
+
+      - name: 语法检查
+        run: python -m compileall -q build.py tools/
+
+      - name: 校验注入二进制哈希清单
+        run: |
+          python - <<'PY'
+          import json, hashlib, pathlib, sys
+
+          manifest = json.loads(pathlib.Path("bin/manifest.json").read_text(encoding="utf-8"))
+          failures = []
+          for name, expected in manifest["files"].items():
+              path = pathlib.Path("bin") / name
+              if not path.exists():
+                  failures.append(f"{name}: 文件缺失")
+                  continue
+              actual = hashlib.sha256(path.read_bytes()).hexdigest()
+              if actual != expected["sha256"]:
+                  failures.append(f"{name}: 哈希不符\n  清单 {expected['sha256']}\n  实际 {actual}")
+
+          upstream = manifest["upstream"]
+          print(f"libportable {upstream['release_tag']}（同步于 {upstream['synced_at']}）")
+          for name in manifest["files"]:
+              print(f"  ok  {name}")
+
+          if failures:
+              sys.exit("\n".join(failures))
+          PY
+
+      - name: 三个浏览器的版本解析
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for browser in firefox floorp zen; do
+            echo "::group::$browser"
+            python build.py --browser "$browser" --auto-version --check-only
+            echo "::endgroup::"
+          done

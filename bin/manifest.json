@@ -1,0 +1,31 @@
+{
+  "_comment": "Provenance for the injection binaries in this directory. build.py verifies every digest before injecting, and refuses to build on a mismatch. Regenerate with: python tools/sync_libportable.py --tag <tag>",
+  "upstream": {
+    "project": "libportable",
+    "repository": "https://github.com/adonais/libportable",
+    "release_tag": "v9.0.9",
+    "release_url": "https://github.com/adonais/libportable/releases/tag/v9.0.9",
+    "published_at": "2026-03-23T23:40:57Z",
+    "asset": "portable_bin.7z",
+    "asset_sha256": "5f71db7e6b433122a21d1c153c74a3d1358283df11000bce7e86848381931649",
+    "synced_at": "2026-07-26"
+  },
+  "files": {
+    "upcheck64.exe": {
+      "sha256": "2df7527fd7af8205d590f73dba0d12b7c7310eeef5ef02f9236b1fa75daaa077",
+      "size": 2704896
+    },
+    "portable64.dll": {
+      "sha256": "1ad32dff59a953b4f50eaa1a53b079318482de22ead212a8dcee9d1eb0a6e469",
+      "size": 114688
+    },
+    "portable(example).ini": {
+      "sha256": "8754371000e860c10a9ab04c460764affc3f54e239bb4bace90b76021b31dbcf",
+      "size": 6085
+    },
+    "README": {
+      "sha256": "7de969c80f587528a3327a6f939f1c158a2e1d2acab7d71a27561d493e3f2673",
+      "size": 2253
+    }
+  }
+}
